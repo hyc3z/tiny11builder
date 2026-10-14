@@ -189,7 +189,16 @@ public sealed class ImageOperations : IImageOperations
         token.ThrowIfCancellationRequested();
         ImageFileAccess.ValidateFile(path);
         if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
-            foreach (var child in Directory.EnumerateFileSystemEntries(path)) DeleteTree(child, turboMode, token);
+        {
+            // Finish and close the enumeration before mutating the mounted directory.
+            // Deleting entries while its cursor is open can skip remaining WIM entries.
+            var children = Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions
+            {
+                AttributesToSkip = 0,
+                IgnoreInaccessible = false
+            }).ToArray();
+            foreach (var child in children) DeleteTree(child, turboMode, token);
+        }
         ImageFileAccess.DeleteEntry(path);
     }
 

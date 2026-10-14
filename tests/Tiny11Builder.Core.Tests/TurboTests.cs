@@ -32,6 +32,29 @@ public sealed class TurboTests(ITestOutputHelper output)
         Assert.False(BuildExecutionPlan.Create(recipe, 16).OptimizedMount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Deletion_removes_large_directories_including_hidden_system_entries(bool turbo)
+    {
+        using var fixture = new BuildFixture();
+        var directory = Path.Combine(fixture.Root, "payload");
+        Directory.CreateDirectory(directory);
+        for (var i = 0; i < 1200; i++)
+        {
+            var file = Path.Combine(directory, $"{i:D4}-" + new string('a', 80) + ".dll");
+            File.WriteAllText(file, "payload");
+            File.SetAttributes(file, FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReadOnly);
+        }
+        var nested = Path.Combine(directory, "hidden-directory");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(nested, "nested.dll"), "payload");
+        File.SetAttributes(nested, FileAttributes.Hidden | FileAttributes.System);
+        using var privileges = new ImageOperations.PrivilegeScope();
+        ImageOperations.DeleteTree(directory, turbo);
+        Assert.False(Directory.Exists(directory));
+    }
+
     [Fact]
     public void Turbo_native_deletion_preserves_remaining_hard_link_attributes()
     {
