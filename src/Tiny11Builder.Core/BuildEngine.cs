@@ -397,6 +397,7 @@ public sealed partial class BuildEngine
                 foreach (var item in session.Cleanup.Where(item => item.State == BuildOperationState.Skipped))
                     tracking.Skip("cleanup:" + item.Path, "Redundant data", $"Clean {item.Path}", item.Detail);
             }
+            DesktopBackgroundInstaller.Apply(mount, recipe, Log);
             Stage("Commit", "Committing the modified working image.");
             await dism.RunAsync(token, "/Unmount-Image", $"/MountDir:{mount}", "/Commit", "/CheckIntegrity").ConfigureAwait(false);
             session.Mounted = false;

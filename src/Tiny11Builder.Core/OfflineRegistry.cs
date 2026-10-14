@@ -45,6 +45,13 @@ public sealed class OfflineRegistry : IOfflineRegistry
                 Set(value.Hive switch { PolicyHive.Software => software, PolicyHive.DefaultUser => user, _ => system },
                     value.Key.Replace("{ControlSet}", controlSet, StringComparison.Ordinal), value.Name, value.Value, log);
         }
+        if (!string.IsNullOrWhiteSpace(recipe.DesktopBackgroundPath))
+        {
+            Set(user, @"Control Panel\Desktop", "Wallpaper",
+                DesktopBackgroundInstaller.InstalledWallpaperPath(recipe.DesktopBackgroundPath), log);
+            Set(user, @"Control Panel\Desktop", "WallpaperStyle", "10", log);
+            Set(user, @"Control Panel\Desktop", "TileWallpaper", "0", log);
+        }
         if (recipe.Flavor == BuildFlavor.Core)
         {
             foreach (var control in system.GetSubKeyNames().Where(key =>

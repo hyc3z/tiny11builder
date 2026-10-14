@@ -410,6 +410,7 @@ public sealed partial class MainWindow : Window
         CompactInstallation = CompactCheck.IsOn, EnableNetFx3 = NetFxCheck.IsOn,
         PreferLocalAccount = LocalAccountCheck.IsOn, KeepWorkingFiles = KeepFilesCheck.IsOn,
         BootMenuName = BootMenuNameBox.Text.Trim(),
+        DesktopBackgroundPath = DesktopBackgroundPathBox.Text.Trim(),
         TurboMode = TurboCheck.IsOn, RemoveRedundantData = RedundantDataCheck.IsOn,
         OmitNetFx3SetupPayload = OmitSetupCheck.IsOn
     };
@@ -677,6 +678,20 @@ public sealed partial class MainWindow : Window
         });
     private async void OnChooseOutput(object sender, RoutedEventArgs args) =>
         await RunOperation(OperationKind.Choose, async _ => { var path = await SaveFile("tiny11", ".iso"); if (path is not null) OutputBox.Text = path; });
+
+    private async void OnChooseDesktopBackground(object sender, RoutedEventArgs args) =>
+        await RunOperation(OperationKind.Choose, async _ =>
+        {
+            var path = await PickFile(".jpg", ".jpeg", ".png", ".bmp");
+            if (path is null) return;
+            try { DesktopBackgroundPathBox.Text = DesktopBackgroundInstaller.ValidateSource(path); }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
+            {
+                ShowNotice("Desktop background image could not be used.", ErrorText.Reason(error), InfoBarSeverity.Warning);
+            }
+        });
+
+    private void OnClearDesktopBackground(object sender, RoutedEventArgs args) => DesktopBackgroundPathBox.Text = "";
 
     private void OnSourceChanged(object sender, TextChangedEventArgs args)
     {
@@ -1143,6 +1158,7 @@ public sealed partial class MainWindow : Window
             $"Configuration ({selectedConfiguration.Length}):\n" +
             (selectedConfiguration.Length == 0 ? "None" : string.Join("\n", selectedConfiguration.Select(title => "• " + title))) + "\n" +
             $"Redundant data: {(recipe.RemoveRedundantData ? "Remove" : "Keep")}\n.NET setup payload: {(recipe.OmitNetFx3SetupPayload ? "Omit" : "Keep")}\n" +
+            $"Desktop background: {(string.IsNullOrWhiteSpace(recipe.DesktopBackgroundPath) ? "Default" : Path.GetFileName(recipe.DesktopBackgroundPath))}\n" +
             $"Compact installation: {(recipe.CompactInstallation ? "On" : "Off")}\n.NET 3.5: {(recipe.EnableNetFx3 ? "Included" : "Not included")}\n" +
             $"Local-account setup: {(recipe.PreferLocalAccount ? "Preferred" : "Default")}\nBoot menu name: {(recipe.BootMenuName.Length == 0 ? "Default" : recipe.BootMenuName)}\nWorking files: {(recipe.KeepWorkingFiles ? "Keep" : "Clean after build")}" +
             (SetupLabels.Legacy(recipe) is { } legacy ? "\n" + legacy : "");
@@ -1617,6 +1633,7 @@ public sealed partial class MainWindow : Window
         NetFxCheck.IsOn = recipe.EnableNetFx3;
         LocalAccountCheck.IsOn = recipe.PreferLocalAccount;
         BootMenuNameBox.Text = recipe.BootMenuName;
+        DesktopBackgroundPathBox.Text = recipe.DesktopBackgroundPath;
         KeepFilesCheck.IsOn = recipe.KeepWorkingFiles;
         TurboCheck.IsOn = recipe.TurboMode;
         RedundantDataCheck.IsOn = recipe.RemoveRedundantData;

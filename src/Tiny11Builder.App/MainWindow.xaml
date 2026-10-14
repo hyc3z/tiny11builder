@@ -377,6 +377,18 @@
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Text="Desktop background image (optional)" FontSize="18" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Copy an image into Windows and set it as the default desktop background for new user accounts. Supported formats: JPG/JPEG, PNG and BMP."
+                                               Style="{StaticResource Secondary}"/>
+                                    <TextBox x:Name="DesktopBackgroundPathBox" Header="Selected image" IsReadOnly="True" PlaceholderText="No image selected"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Button Content="Choose image" Click="OnChooseDesktopBackground"/>
+                                        <Button Content="Clear" Click="OnClearDesktopBackground"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
                                 <Grid ColumnSpacing="20">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <FontIcon Glyph="&#xE945;" FontSize="36" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>

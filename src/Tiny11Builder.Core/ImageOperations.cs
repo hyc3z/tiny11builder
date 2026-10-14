@@ -190,17 +190,42 @@ public sealed class ImageOperations : IImageOperations
         ImageFileAccess.ValidateFile(path);
         if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
         {
-            // Finish and close the enumeration before mutating the mounted directory.
-            // Deleting entries while its cursor is open can skip remaining WIM entries.
-            var children = Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions
+            // WIM-backed directory enumeration may reveal additional entries after the first snapshot
+            // has been removed. Close each enumeration before mutating, then rescan until empty.
+            const int maxPasses = 8;
+            for (var pass = 0; pass < maxPasses; pass++)
             {
-                AttributesToSkip = 0,
-                IgnoreInaccessible = false
-            }).ToArray();
-            foreach (var child in children) DeleteTree(child, turboMode, token);
+                token.ThrowIfCancellationRequested();
+                var children = EnumerateChildren(path);
+                foreach (var child in children) DeleteTree(child, turboMode, token);
+                try
+                {
+                    ImageFileAccess.DeleteEntry(path);
+                    return;
+                }
+                catch (Win32Exception error) when (error.NativeErrorCode == 145 && pass + 1 < maxPasses)
+                {
+                    // ERROR_DIR_NOT_EMPTY: another WIM entry remained or became visible after the snapshot.
+                }
+                catch (Win32Exception error) when (error.NativeErrorCode == 145)
+                {
+                    var remaining = EnumerateChildren(path);
+                    var sample = string.Join(", ", remaining.Take(8).Select(child => Path.GetFileName(child)));
+                    throw new IOException(
+                        $"Offline directory remained non-empty after {maxPasses} cleanup passes: {path}" +
+                        (sample.Length == 0 ? "" : $". Remaining entries: {sample}"), error);
+                }
+            }
+            throw new IOException($"Unable to remove offline directory: {path}");
         }
         ImageFileAccess.DeleteEntry(path);
     }
+
+    private static string[] EnumerateChildren(string path) => Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions
+    {
+        AttributesToSkip = 0,
+        IgnoreInaccessible = false
+    }).ToArray();
 
     internal sealed class PrivilegeScope : IDisposable
     {

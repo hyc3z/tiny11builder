@@ -29,6 +29,8 @@ public static class PathSafety
         recipe.ValidateOptions();
         ValidateWorkspace(recipe.SourcePath, recipe.WorkspacePath);
         ValidateOutput(recipe);
+        if (!string.IsNullOrWhiteSpace(recipe.DesktopBackgroundPath))
+            _ = DesktopBackgroundInstaller.ValidateSource(recipe.DesktopBackgroundPath);
     }
 
     /// <summary>

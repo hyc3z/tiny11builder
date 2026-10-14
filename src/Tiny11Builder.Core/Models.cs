@@ -70,6 +70,7 @@ public sealed record BuildRecipe
     public bool CompactInstallation { get; init; } = true;
     public bool PreferLocalAccount { get; init; }
     public string BootMenuName { get; init; } = "";
+    public string DesktopBackgroundPath { get; init; } = "";
     public bool KeepWorkingFiles { get; init; }
     public bool TurboMode { get; init; }
     public bool RemoveRedundantData { get; init; }
@@ -114,6 +115,9 @@ public sealed record BuildRecipe
         if (BootMenuName is null || BootMenuName.Length > 80 ||
             BootMenuName.Any(c => !char.IsLetterOrDigit(c) && c is not (' ' or '-' or '_' or '.')))
             throw new InvalidDataException("Boot menu name must be at most 80 characters, using letters, numbers, spaces, hyphens, underscores or periods.");
+        if (DesktopBackgroundPath is null || (!string.IsNullOrWhiteSpace(DesktopBackgroundPath) &&
+            !DesktopBackgroundInstaller.IsSupportedExtension(Path.GetExtension(DesktopBackgroundPath))))
+            throw new InvalidDataException("Desktop background image must be a JPG, JPEG, PNG or BMP file.");
     }
 
     public static BuildRecipe Read(string path)
