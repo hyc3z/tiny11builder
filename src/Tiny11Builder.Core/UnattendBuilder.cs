@@ -6,6 +6,7 @@ public static class UnattendBuilder
 {
     public static string Create(WindowsImage image, BuildRecipe recipe)
     {
+        recipe.ValidateBootMenuName();
         XNamespace ns = "urn:schemas-microsoft-com:unattend";
         XNamespace wcm = "http://schemas.microsoft.com/WMIConfig/2002/State";
         XElement Component(string name, params object[] children) => new(ns + "component",
@@ -26,6 +27,14 @@ public static class UnattendBuilder
                                 new XAttribute(wcm + "action", "add"), new XElement(ns + "Key", "/IMAGE/INDEX"),
                                 new XElement(ns + "Value", 1))))),
                         new XElement(ns + "DynamicUpdate", new XElement(ns + "Enable", false)))),
+                string.IsNullOrWhiteSpace(recipe.BootMenuName) ? null :
+                    new XElement(ns + "settings", new XAttribute("pass", "specialize"),
+                        Component("Microsoft-Windows-Deployment",
+                            new XElement(ns + "RunSynchronous",
+                                new XElement(ns + "RunSynchronousCommand", new XAttribute(wcm + "action", "add"),
+                                    new XElement(ns + "Order", 1),
+                                    new XElement(ns + "Description", "Set Windows boot menu name"),
+                                    new XElement(ns + "Path", $"%WINDIR%\\System32\\bcdedit.exe /set {{current}} description \"{recipe.BootMenuName.Trim()}\""))))),
                 new XElement(ns + "settings", new XAttribute("pass", "oobeSystem"),
                     Component("Microsoft-Windows-Shell-Setup", oobe)))).ToString();
     }

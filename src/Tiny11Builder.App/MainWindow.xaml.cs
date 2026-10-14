@@ -18,13 +18,16 @@ namespace Tiny11Builder.App;
 
 public sealed partial class MainWindow : Window
 {
+    private sealed record RecentPaths(string SourcePath, int? ImageIndex, string WorkspacePath, string OutputPath);
+
     private readonly BuildEngine engine = new(new ProcessRunner(), new MediaSourceFactory(),
         new OfflineRegistry(), new ImageOperations(), new BuildHost());
     private readonly List<OptionChoice> options = CleanupCatalog.Options.Select(o => new OptionChoice(o)).ToList();
     private const int ConfigurationStep = 5;
-    private const int BuildStep = 6;
+    private const int BuildStep = 7;
     private readonly List<ConfigurationChoice> configurations = ConfigurationCatalog.Options.Select(o => new ConfigurationChoice(o)).ToList();
     private List<InventoryChoice> inventory = [];
+    private bool applyingAnalysis;
     private ExpertAction[] pendingActions = [];
     private int? pendingImageIndex;
     private string pendingSourcePath = "";
@@ -81,6 +84,7 @@ public sealed partial class MainWindow : Window
         };
         WorkspaceBox.Text = @"C:\tiny11";
         OutputBox.Text = Path.Combine(WorkspaceBox.Text, $"tiny11-{DateTime.Now:yyyyMMdd-HHmmss}.iso");
+        LoadRecentPaths();
         BuildStages.ItemsSource = board.Stages;
         progressTimer.Tick += (_, _) => { FlushBuildProgress(); DrainDownload(); };
         // Desktop apps cannot subscribe to AccessibilitySettings.HighContrastChanged (it throws), so
@@ -115,11 +119,76 @@ public sealed partial class MainWindow : Window
         UpdateCounts();
     }
 
-    private FrameworkElement[] Panels => [WelcomePanel, SourcePanel, CleanupPanel, SettingsPanel, ReviewPanel, ConfigurationPanel, BuildPanel];
+    private FrameworkElement[] Panels => [WelcomePanel, SourcePanel, CleanupPanel, AdvancedPanel, SettingsPanel, ConfigurationPanel, ReviewPanel, BuildPanel];
     private BuildMode SelectedMode => (BuildMode)ModeChoice.SelectedIndex;
     private bool UsesCore => SelectedMode == BuildMode.Tiny11Core ||
         (SelectedMode == BuildMode.Custom && CustomCoreCheck.IsOn);
     private static string HostArchitecture => RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64" : "x64";
+
+    private string RecentPathsFile => Path.Combine(dataDirectory, "recent-paths.json");
+
+    private void LoadRecentPaths()
+    {
+        try
+        {
+            if (!File.Exists(RecentPathsFile)) return;
+            var recent = JsonSerializer.Deserialize<RecentPaths>(File.ReadAllText(RecentPathsFile), JsonDefaults.Options);
+            if (recent is null) return;
+
+            if (Directory.Exists(recent.WorkspacePath)) WorkspaceBox.Text = recent.WorkspacePath;
+            if (CanUseOutputPath(recent.OutputPath)) OutputBox.Text = recent.OutputPath;
+            else OutputBox.Text = Path.Combine(WorkspaceBox.Text, $"tiny11-{DateTime.Now:yyyyMMdd-HHmmss}.iso");
+
+            if (File.Exists(recent.SourcePath) || Directory.Exists(recent.SourcePath))
+            {
+                SourcePathBox.Text = recent.SourcePath;
+                pendingSourcePath = recent.SourcePath;
+                pendingImageIndex = recent.ImageIndex;
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            // Keep the defaults initialized above when the cache cannot be read.
+        }
+    }
+
+    private static bool CanUseOutputPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var directory = Path.GetDirectoryName(fullPath);
+            return Path.GetExtension(fullPath).Equals(".iso", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrEmpty(directory) && Directory.Exists(directory);
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private void SaveRecentPaths()
+    {
+        try
+        {
+            Directory.CreateDirectory(dataDirectory);
+            var recent = new RecentPaths(SourcePathBox.Text.Trim(), image?.Index ?? pendingImageIndex,
+                WorkspaceBox.Text.Trim(), OutputBox.Text.Trim());
+            var temporary = RecentPathsFile + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(recent, JsonDefaults.Options));
+            File.Move(temporary, RecentPathsFile, overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            // Path caching is best effort and must not interrupt selecting a source or starting a build.
+        }
+    }
+
+    private void OnBuildPathsChanged(object sender, TextChangedEventArgs args)
+    {
+        if (initialized) SaveRecentPaths();
+    }
 
     private void OnContentSizeChanged(object sender, SizeChangedEventArgs args) => UpdateWelcomeLayout();
 
@@ -186,7 +255,7 @@ public sealed partial class MainWindow : Window
         StepNumber.Opacity = 0.10;
         UpdateWelcomeLayout();
         ContentScroller.ChangeView(null, 0, null, disableAnimation: true);
-        if (value == 4) UpdateReview();
+        if (value == 6) UpdateReview();
         if (value == ConfigurationStep) UpdateConfiguration();
         if (value == BuildStep) UpdateBuildDescription(CreateRecipe());
         UpdateNavigation();
@@ -203,7 +272,7 @@ public sealed partial class MainWindow : Window
         var canAdvance = step switch
         {
             1 => image?.IsSupported == true,
-            2 => customCount == 0 || ExpertConsent.IsChecked == true,
+            2 or 3 => customCount == 0 || ExpertConsent.IsChecked == true,
             _ => true
         };
         NextButton.IsEnabled = !busy && canAdvance;
@@ -211,7 +280,7 @@ public sealed partial class MainWindow : Window
         var retry = step == BuildStep && !completed && stoppedRun is not null;
         ActionLabel.Text = completed ? "Build another" : retry ? (stoppedRun == OperationKind.Resume ? "Resume again" : "Build again") : step switch
         {
-            0 => "Start", 1 => "Next", 2 => "Next", 3 => "Review", 4 => "Configure", ConfigurationStep => "Continue", _ => "Build"
+            0 => "Start", 1 => "Next", 2 => "Individual components", 3 => "Build settings", 4 => "Configuration", 5 => "Review", 6 => "Continue", _ => "Build"
         };
         ActionLabel.FontSize = 20;
         Grid.SetColumn(NextButton, 2);
@@ -252,7 +321,11 @@ public sealed partial class MainWindow : Window
         GoStep(next);
     }
 
-    private void OnBack(object sender, RoutedEventArgs args) { if (!busy && !modalOpen && step > 0) GoStep(step - 1); }
+    private void OnBack(object sender, RoutedEventArgs args)
+    {
+        if (busy || modalOpen || step <= 0) return;
+        GoStep(step switch { 3 => 2, 4 => 3, _ => step - 1 });
+    }
 
     private void OnModeCardClick(object sender, RoutedEventArgs args)
     {
@@ -305,7 +378,7 @@ public sealed partial class MainWindow : Window
             if (step >= 1 && image is null) throw new InvalidOperationException("Inspect the selected Windows image first.");
             image?.Validate();
             if (step >= 2) CreateRecipe().ValidateOptions();
-            if (step >= 3)
+            if (step >= 4)
             {
                 await EnsureToolsAsync(token);
                 var recipe = CreateRecipe();
@@ -318,7 +391,7 @@ public sealed partial class MainWindow : Window
                 }, token);
             }
             token.ThrowIfCancellationRequested();
-            GoStep(step + 1);
+            GoStep(step switch { 0 => 1, 1 => 2, 2 => 3, 3 => 4, 4 => 5, 5 => 6, 6 => 7, _ => step });
             await Task.CompletedTask;
         });
     }
@@ -336,6 +409,7 @@ public sealed partial class MainWindow : Window
         Compression = (Compression)CompressionChoice.SelectedIndex,
         CompactInstallation = CompactCheck.IsOn, EnableNetFx3 = NetFxCheck.IsOn,
         PreferLocalAccount = LocalAccountCheck.IsOn, KeepWorkingFiles = KeepFilesCheck.IsOn,
+        BootMenuName = BootMenuNameBox.Text.Trim(),
         TurboMode = TurboCheck.IsOn, RemoveRedundantData = RedundantDataCheck.IsOn,
         OmitNetFx3SetupPayload = OmitSetupCheck.IsOn
     };
@@ -592,7 +666,15 @@ public sealed partial class MainWindow : Window
     private async void OnChooseSourceFolder(object sender, RoutedEventArgs args) =>
         await RunOperation(OperationKind.Inspect, async token => { var path = await PickFolder(); if (path is not null) { SourcePathBox.Text = path; await InspectSourceAsync(token); } });
     private async void OnChooseWorkspace(object sender, RoutedEventArgs args) =>
-        await RunOperation(OperationKind.Choose, async _ => { var path = await PickFolder(); if (path is not null) WorkspaceBox.Text = path; });
+        await RunOperation(OperationKind.Choose, async _ =>
+        {
+            var path = await PickFolder();
+            if (path is null) return;
+            WorkspaceBox.Text = path;
+            var outputName = Path.GetFileName(OutputBox.Text.Trim());
+            if (string.IsNullOrWhiteSpace(outputName)) outputName = $"tiny11-{DateTime.Now:yyyyMMdd-HHmmss}.iso";
+            OutputBox.Text = Path.Combine(path, outputName);
+        });
     private async void OnChooseOutput(object sender, RoutedEventArgs args) =>
         await RunOperation(OperationKind.Choose, async _ => { var path = await SaveFile("tiny11", ".iso"); if (path is not null) OutputBox.Text = path; });
 
@@ -604,7 +686,9 @@ public sealed partial class MainWindow : Window
         pendingSourcePath = "";
         EditionChoice.ItemsSource = null;
         ImageBadge.Text = "No image selected";
+        ListComponentsButton.IsEnabled = false;
         ClearInventory();
+        SaveRecentPaths();
         UpdateNavigation();
     }
     private void OnEditionChanged(object sender, SelectionChangedEventArgs args)
@@ -616,7 +700,14 @@ public sealed partial class MainWindow : Window
               SourcePathBox.Text.Trim().Equals(pendingSourcePath, StringComparison.OrdinalIgnoreCase)))
             ClearInventory();
         image = selected;
+        if (image is not null)
+        {
+            pendingImageIndex = image.Index;
+            pendingSourcePath = SourcePathBox.Text.Trim();
+            SaveRecentPaths();
+        }
         ImageBadge.Text = image is null ? "No image selected" : $"{image.Name}\n{image.Architecture} · build {image.Version.Build}";
+        ListComponentsButton.IsEnabled = SelectedMode == BuildMode.Custom && image is not null;
         if (image is not null && !image.IsSupported)
             ShowNotice("This edition is not supported.", "Choose a Windows 11 client image, 22H2 or newer, in x64 or ARM64 format.", InfoBarSeverity.Warning);
         UpdateNavigation();
@@ -793,6 +884,8 @@ public sealed partial class MainWindow : Window
     private void UpdateModePresentation()
     {
         CustomChoices.Visibility = SelectedMode == BuildMode.Custom ? Visibility.Visible : Visibility.Collapsed;
+        AdvancedRailItem.IsEnabled = SelectedMode == BuildMode.Custom;
+        ListComponentsButton.IsEnabled = SelectedMode == BuildMode.Custom && image is not null;
         CoreWarning.IsOpen = UsesCore;
         CoreConsentStatus.Visibility = UsesCore ? Visibility.Visible : Visibility.Collapsed;
         CoreConsentStatus.Text = coreAcknowledged ? "Core limitations accepted for this build." : "You will be asked to accept Core's limitations before continuing.";
@@ -850,7 +943,7 @@ public sealed partial class MainWindow : Window
     }
     private void UpdateCounts()
     {
-        if (!initialized) return;
+        if (!initialized || applyingAnalysis) return;
         var custom = inventory.Count > 0 ? inventory.Count(i => i.Selected) : pendingActions.Length;
         SelectionCount.Text = $"{options.Count(o => o.Selected)} removal groups selected · {custom} advanced actions";
         ExpertCount.Text = $"{inventory.Count:N0} components listed · {custom:N0} advanced actions selected.";
@@ -861,6 +954,7 @@ public sealed partial class MainWindow : Window
     {
         if (busy || modalOpen || SelectedMode != BuildMode.Custom) return;
         if (image is null) { ShowNotice("Inspect an image first.", "Select an edition before listing its components.", InfoBarSeverity.Warning); return; }
+        if (inventory.Count > 0) { GoStep(3); return; }
         if (!await Confirm("Protected components are included",
             "This inventory includes boot drivers, security, licensing, system apps and component payloads. Removing them can make Windows unbootable, insecure or impossible to update. Protected packages may refuse removal. Direct payload removal is unsupported.\n\nContinue only for isolated testing, with backups and a known-good installer.",
             "Inspect components")) return;
@@ -880,12 +974,95 @@ public sealed partial class MainWindow : Window
             }).ToList();
             pendingActions = [];
             ExpertPanel.Visibility = Visibility.Visible;
+            ListComponentsButton.Visibility = Visibility.Collapsed;
             ExpertConsent.IsChecked = true;
             FilterInventory();
             UpdateCounts();
             ShowNotice("Component list loaded.", "Existing selections were preserved. Check the individual items you want to remove or disable.");
+            GoStep(3);
         });
     }
+
+    private async void OnExportInventory(object sender, RoutedEventArgs args) => await RunOperation(OperationKind.Recipe, async token =>
+    {
+        if (inventory.Count == 0 || image is null)
+        {
+            ShowNotice("List components first.", "Inspect an image and use List all components before exporting.", InfoBarSeverity.Warning);
+            return;
+        }
+        var report = new
+        {
+            SchemaVersion = 1,
+            ReportType = "Tiny11Builder.AdvancedRemovalInventory",
+            ExportedAtUtc = DateTimeOffset.UtcNow,
+            Image = image,
+            Notes = "Complete inventory, including items hidden by search or category filters. Selected means a planned action; no removals have been performed by this export. Protected is a warning, not a compatibility assessment. This report is for analysis, not a build recipe.",
+            TotalComponents = inventory.Count,
+            SelectedComponents = inventory.Count(i => i.Selected),
+            Components = inventory.Select(i => new
+            {
+                i.Item.Kind,
+                i.Item.Identity,
+                i.Item.Detail,
+                i.Item.Protected,
+                i.Selected,
+                Action = i.Selected ? (ExpertActionMode?)i.Action.Mode : null
+            }).ToArray()
+        };
+        var path = await SaveFile("tiny11-advanced-removals", ".json");
+        if (path is null) return;
+        var json = JsonSerializer.Serialize(report, JsonDefaults.Options);
+        await File.WriteAllTextAsync(path, json, token);
+        var bundle = Path.Combine(Path.GetDirectoryName(path)!, Path.GetFileNameWithoutExtension(path) + "-ai-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(bundle);
+            await File.WriteAllTextAsync(Path.Combine(bundle, "inventory.json"), json, token);
+            var template = RemovalAnalysis.CreateTemplate(image, inventory.Select(i => i.Item).ToArray());
+            await File.WriteAllTextAsync(Path.Combine(bundle, "analysis-template.json"), JsonSerializer.Serialize(template, JsonDefaults.Options), token);
+            await File.WriteAllTextAsync(Path.Combine(bundle, "README-AI.md"), RemovalAnalysis.TemplateInstructions, token);
+            await File.WriteAllTextAsync(Path.Combine(bundle, "PROMPT-CS2.md"), RemovalAnalysis.CompetitionPrompt, token);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            ShowNotice("Inventory saved; AI bundle incomplete.", $"The inventory was saved to {path}. The template bundle at {bundle} is incomplete; export again. {error.Message}", InfoBarSeverity.Warning);
+            return;
+        }
+        ShowNotice("Inventory, template and CS2 prompt exported.", $"Saved {report.TotalComponents:N0} components to {path}. Give the AI all four files in {bundle}: inventory.json, analysis-template.json, README-AI.md and PROMPT-CS2.md. Import its completed analysis.json, not an HTML report.");
+    });
+
+    private async void OnImportAnalysis(object sender, RoutedEventArgs args) => await RunOperation(OperationKind.Recipe, async _ =>
+    {
+        if (image is null || inventory.Count == 0)
+        {
+            ShowNotice("List components first.", "Load the current image's full component list before importing analysis.", InfoBarSeverity.Warning);
+            return;
+        }
+        var path = await PickFile(".json");
+        if (path is null) return;
+        IReadOnlyDictionary<string, RemovalAnalysisEntry> matched;
+        var currentImage = image;
+        var currentItems = inventory.Select(i => i.Item).ToArray();
+        try
+        {
+            matched = await Task.Run(() => RemovalAnalysis.Read(path).Match(currentImage, currentItems));
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            ShowNotice("无法导入分析文件", error.Message + " 当前分析与选择未改变。", InfoBarSeverity.Warning);
+            return;
+        }
+        applyingAnalysis = true;
+        try
+        {
+            foreach (var choice in inventory) choice.ImportAnalysis(matched.GetValueOrDefault(choice.Item.Key));
+        }
+        finally { applyingAnalysis = false; }
+        FilterInventory();
+        UpdateCounts();
+        var importedActions = matched.Values.Count(i => i.Recommendation is RemovalRecommendation.Remove or RemovalRecommendation.Disable);
+        ShowNotice("Analysis imported and selections added.", $"{matched.Count:N0} exact matches; {importedActions:N0} recommended actions checked; {inventory.Count(i => i.Selected):N0} individual actions selected in total. Existing groups, Core and other manual selections are retained. Keep/Review are advice, not protection against group removals.");
+    });
 
     private void ClearInventory()
     {
@@ -893,6 +1070,7 @@ public sealed partial class MainWindow : Window
         pendingActions = [];
         InventoryList.ItemsSource = null;
         ExpertPanel.Visibility = Visibility.Collapsed;
+        ListComponentsButton.Visibility = Visibility.Visible;
         ExpertConsent.IsChecked = false;
         UpdateCounts();
     }
@@ -904,7 +1082,8 @@ public sealed partial class MainWindow : Window
         var query = InventorySearch.Text.Trim();
         InventoryList.ItemsSource = inventory.Where(i => (filter == "All" || i.Item.Kind.ToString() == filter) &&
             (query.Length == 0 || i.Title.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-             i.Detail.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
+             i.Detail.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+             i.AnalysisText.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
     }
     private void OnClearExpert(object sender, RoutedEventArgs args)
     {
@@ -932,6 +1111,7 @@ public sealed partial class MainWindow : Window
         text.AppendLine($"COMPACT     {recipe.CompactInstallation}");
         text.AppendLine($".NET 3.5    {recipe.EnableNetFx3}");
         text.AppendLine($"LOCAL OOBE  {recipe.PreferLocalAccount} (best effort)");
+        text.AppendLine($"BOOT NAME   {(recipe.BootMenuName.Length == 0 ? "Default" : recipe.BootMenuName)}");
         if (SetupLabels.LegacyReason(recipe) is { } legacyReason) text.AppendLine($"LEGACY SETUP automatic, needed for {legacyReason}");
         text.AppendLine("\nREMOVE / DISABLE");
         foreach (var option in options.Where(o => o.Selected)) text.AppendLine($"  {option.Title}");
@@ -958,11 +1138,13 @@ public sealed partial class MainWindow : Window
                 "Custom removals may affect servicing, recovery or security." : "Windows Update, recovery and Defender retained.");
         ReviewPaths.Text = $"ISO\n{recipe.OutputPath}\n\nWorkspace\n{recipe.WorkspacePath}";
         var compression = recipe.Compression switch { Compression.Recovery => "Recovery ESD", Compression.Maximum => "Maximum WIM", _ => "Fast WIM" };
+        var selectedConfiguration = configurations.Where(choice => choice.Selected).Select(choice => choice.Title).ToArray();
         ReviewOptions.Text = $"{compression} compression\nTurbo mode: {(recipe.TurboMode ? "On" : "Off")}\n" +
-            $"Configuration: {recipe.ConfigurationOptions.Length} settings\n" +
+            $"Configuration ({selectedConfiguration.Length}):\n" +
+            (selectedConfiguration.Length == 0 ? "None" : string.Join("\n", selectedConfiguration.Select(title => "• " + title))) + "\n" +
             $"Redundant data: {(recipe.RemoveRedundantData ? "Remove" : "Keep")}\n.NET setup payload: {(recipe.OmitNetFx3SetupPayload ? "Omit" : "Keep")}\n" +
             $"Compact installation: {(recipe.CompactInstallation ? "On" : "Off")}\n.NET 3.5: {(recipe.EnableNetFx3 ? "Included" : "Not included")}\n" +
-            $"Local-account setup: {(recipe.PreferLocalAccount ? "Preferred" : "Default")}\nWorking files: {(recipe.KeepWorkingFiles ? "Keep" : "Clean after build")}" +
+            $"Local-account setup: {(recipe.PreferLocalAccount ? "Preferred" : "Default")}\nBoot menu name: {(recipe.BootMenuName.Length == 0 ? "Default" : recipe.BootMenuName)}\nWorking files: {(recipe.KeepWorkingFiles ? "Keep" : "Clean after build")}" +
             (SetupLabels.Legacy(recipe) is { } legacy ? "\n" + legacy : "");
     }
 
@@ -1434,6 +1616,7 @@ public sealed partial class MainWindow : Window
         CompactCheck.IsOn = recipe.CompactInstallation;
         NetFxCheck.IsOn = recipe.EnableNetFx3;
         LocalAccountCheck.IsOn = recipe.PreferLocalAccount;
+        BootMenuNameBox.Text = recipe.BootMenuName;
         KeepFilesCheck.IsOn = recipe.KeepWorkingFiles;
         TurboCheck.IsOn = recipe.TurboMode;
         RedundantDataCheck.IsOn = recipe.RemoveRedundantData;
@@ -1441,13 +1624,14 @@ public sealed partial class MainWindow : Window
         pendingActions = recipe.ExpertActions;
         pendingImageIndex = recipe.ImageIndex;
         pendingSourcePath = recipe.SourcePath;
-        if (pendingActions.Length > 0) ExpertPanel.Visibility = Visibility.Visible;
+        ListComponentsButton.Visibility = Visibility.Visible;
         coreAcknowledged = false;
         ExpertConsent.IsChecked = false;
         UpdateModePresentation();
         reached = 1;
         GoStep(1);
         UpdateCounts();
+        SaveRecentPaths();
     }
 
     private async void OnRecover(object sender, RoutedEventArgs args)

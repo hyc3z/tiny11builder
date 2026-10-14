@@ -69,6 +69,7 @@ public sealed record BuildRecipe
     public bool EnableNetFx3 { get; init; }
     public bool CompactInstallation { get; init; } = true;
     public bool PreferLocalAccount { get; init; }
+    public string BootMenuName { get; init; } = "";
     public bool KeepWorkingFiles { get; init; }
     public bool TurboMode { get; init; }
     public bool RemoveRedundantData { get; init; }
@@ -76,6 +77,7 @@ public sealed record BuildRecipe
 
     public void ValidateOptions()
     {
+        ValidateBootMenuName();
         if (ConfigurationOptions is null || ConfigurationOptions.Distinct(StringComparer.Ordinal).Count() != ConfigurationOptions.Length ||
             ConfigurationOptions.Any(id => !ConfigurationCatalog.Options.Any(option => option.Id == id)))
             throw new InvalidDataException("Unknown or duplicate Windows configuration options.");
@@ -105,6 +107,13 @@ public sealed record BuildRecipe
              ExpertActions.Length > 0 ||
              !SelectedOptions.ToHashSet(StringComparer.Ordinal).SetEquals(CleanupCatalog.ForMode(Mode.Value))))
             throw new InvalidDataException("Use Custom for changes to the Tiny11 or Tiny11 Core removal sets.");
+    }
+
+    public void ValidateBootMenuName()
+    {
+        if (BootMenuName is null || BootMenuName.Length > 80 ||
+            BootMenuName.Any(c => !char.IsLetterOrDigit(c) && c is not (' ' or '-' or '_' or '.')))
+            throw new InvalidDataException("Boot menu name must be at most 80 characters, using letters, numbers, spaces, hyphens, underscores or periods.");
     }
 
     public static BuildRecipe Read(string path)

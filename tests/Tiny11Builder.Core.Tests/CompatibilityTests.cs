@@ -108,6 +108,32 @@ public sealed class CompatibilityTests
         Assert.Equal("false", xml.Descendants(ns + "DynamicUpdate").Single().Element(ns + "Enable")!.Value);
     }
 
+    [Theory]
+    [InlineData("x64", "amd64")]
+    [InlineData("arm64", "arm64")]
+    public void Custom_boot_name_targets_installed_current_entry_in_specialize(string architecture, string expected)
+    {
+        var xml = XDocument.Parse(UnattendBuilder.Create(Image(29689, architecture), new() { BootMenuName = "goat-os" }));
+        XNamespace ns = "urn:schemas-microsoft-com:unattend";
+        var settings = xml.Descendants(ns + "settings").Single(s => (string?)s.Attribute("pass") == "specialize");
+        Assert.Equal(expected, settings.Element(ns + "component")!.Attribute("processorArchitecture")!.Value);
+        Assert.Equal("%WINDIR%\\System32\\bcdedit.exe /set {current} description \"goat-os\"", settings.Descendants(ns + "Path").Single().Value);
+        var defaults = XDocument.Parse(UnattendBuilder.Create(Image(29689, architecture), new()));
+        Assert.Empty(defaults.Descendants(ns + "RunSynchronousCommand"));
+    }
+
+    [Theory]
+    [InlineData("bad\"name")]
+    [InlineData("bad\nname")]
+    [InlineData("%WINDIR%")]
+    [InlineData("goat & whoami")]
+    public void Boot_name_rejects_command_characters(string name)
+    {
+        var recipe = new BuildRecipe { BootMenuName = name };
+        Assert.Throws<InvalidDataException>(() => recipe.ValidateOptions());
+        Assert.Throws<InvalidDataException>(() => UnattendBuilder.Create(Image(29689, "x64"), recipe));
+    }
+
     [Fact]
     public void Build_modes_have_exact_original_core_and_empty_custom_removal_sets()
     {

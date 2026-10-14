@@ -32,7 +32,7 @@ public sealed class OptionChoice(CleanupOption option) : ObservableChoice
 
 public sealed class ConfigurationChoice(ConfigurationOption option) : ObservableChoice
 {
-    private bool selected;
+    private bool selected = option.Id != "language";
     public ConfigurationOption Option { get; } = option;
     public string Title => Option.Title;
     public string Description => Option.Description;
@@ -43,6 +43,16 @@ public sealed record ConfigurationGroup(string Title, ConfigurationChoice[] Choi
 
 public sealed class InventoryChoice(ImageInventoryItem item) : ObservableChoice
 {
+    private RemovalAnalysisEntry? analysis;
+    public RemovalAnalysisEntry? Analysis { get => analysis; set { if (Set(ref analysis, value)) Notify(nameof(AnalysisText)); } }
+    public string AnalysisText => Analysis?.Summary ?? "";
+    public void ImportAnalysis(RemovalAnalysisEntry? entry)
+    {
+        Analysis = entry;
+        if (entry?.Recommendation is not (RemovalRecommendation.Remove or RemovalRecommendation.Disable)) return;
+        ModeIndex = entry.Recommendation == RemovalRecommendation.Disable ? 0 : 1;
+        Selected = true;
+    }
     private bool selected;
     private int modeIndex = item.Kind == ImageItemKind.Service ? 0 : 1;
     public ImageInventoryItem Item { get; } = item;
