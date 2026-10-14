@@ -1,0 +1,123 @@
+namespace Tiny11Builder.Core;
+
+public sealed record ConfigurationOption(string Id, string Category, string Title, string Description,
+    string Reference, bool Recommended, params PolicyValue[] Values);
+
+// Independently implemented offline settings from the RyanOS analysis, not bundled RyanOS scripts.
+// HKCU settings target Users\Default so newly created users inherit the preferences.
+public static class ConfigurationCatalog
+{
+    private const string Explorer = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    private const string UserWindows = @"Software\Microsoft\Windows\CurrentVersion";
+    private const string Policies = @"Policies\Microsoft\Windows";
+    private static PolicyValue M(string key, string name, object value) => new(PolicyHive.Software, key, name, value);
+    private static PolicyValue U(string key, string name, object value) => new(PolicyHive.DefaultUser, key, name, value);
+    private static PolicyValue S(string key, string name, object value) => new(PolicyHive.System, @"{ControlSet}\" + key, name, value);
+
+    public static IReadOnlyList<ConfigurationOption> Options { get; } =
+    [
+        new("advertising", "Privacy", "Disable advertising ID", "Turn off Windows advertising ID for apps.", "B §4.3", true,
+            U(UserWindows + @"\AdvertisingInfo", "Enabled", 0), M(Policies + @"\AdvertisingInfo", "DisabledByGroupPolicy", 1)),
+        new("tailored", "Privacy", "Disable tailored experiences", "Do not use diagnostic data to personalize suggestions.", "B §4.1", true,
+            U(UserWindows + @"\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled", 0),
+            U(@"Software\Policies\Microsoft\Windows\CloudContent", "DisableTailoredExperiencesWithDiagnosticData", 1)),
+        new("activity", "Privacy", "Disable activity history", "Disable activity feed, publishing and uploading of user activities.", "B §4.1", true,
+            M(Policies + @"\System", "EnableActivityFeed", 0), M(Policies + @"\System", "PublishUserActivities", 0), M(Policies + @"\System", "UploadUserActivities", 0)),
+        new("speech", "Privacy", "Disable online speech recognition", "New users start without online speech consent. They can enable it later.", "B §4.1", false,
+            U(@"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted", 0)),
+        new("tracking", "Privacy", "Disable app launch tracking", "Stop building the frequently used apps list.", "B §4.1", true,
+            U(Explorer, "Start_TrackProgs", 0)),
+        new("language", "Privacy", "Limit language-list sharing", "Opt out of Windows language-list sharing with websites; browser settings remain separate.", "B §4.1", false,
+            U(@"Control Panel\International\User Profile", "HttpAcceptLanguageOptOut", 1)),
+        new("cloud-search", "Privacy", "Disable web and cloud search", "Keep local search; disable web suggestions and account cloud results where supported.", "B §4.2", true,
+            U(@"Software\Policies\Microsoft\Windows\Explorer", "DisableSearchBoxSuggestions", 1),
+            U(UserWindows + @"\SearchSettings", "IsAADCloudSearchEnabled", 0), U(UserWindows + @"\SearchSettings", "IsMSACloudSearchEnabled", 0),
+            M(Policies + @"\Windows Search", "ConnectedSearchUseWeb", 0), M(Policies + @"\Windows Search", "DisableWebSearch", 1),
+            M(Policies + @"\Windows Search", "EnableDynamicContentInWSB", 0)),
+        new("search-history", "Privacy", "Disable device search history", "Do not save new users' on-device search history.", "B §4.2", true,
+            U(UserWindows + @"\SearchSettings", "IsDeviceSearchHistoryEnabled", 0)),
+        new("feedback", "Privacy", "Hide feedback requests", "Suppress Windows feedback prompts.", "B §5.1", true,
+            M(Policies + @"\DataCollection", "DoNotShowFeedbackNotifications", 1), U(@"Software\Microsoft\Siuf\Rules", "NumberOfSIUFInPeriod", 0)),
+        new("background-apps", "Performance", "Limit app background activity", "Set legacy Windows app background preferences. Notifications and synchronization may be affected; desktop services are not blocked.", "B §3.2", false,
+            U(UserWindows + @"\BackgroundAccessApplications", "GlobalUserDisabled", 1), U(UserWindows + @"\Search", "BackgroundAppGlobalToggle", 0)),
+        new("mmcss", "Performance", "RyanOS multimedia scheduling", "Set SystemResponsiveness to 10. This is a scheduling preference, not a guaranteed FPS improvement.", "B §3.2", false,
+            M(@"Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "SystemResponsiveness", 10)),
+        new("foreground", "Performance", "Favor foreground applications", "Use the documented RyanOS priority separation value (0x26); it may already match Windows defaults.", "B §3.3", false,
+            S(@"Control\PriorityControl", "Win32PrioritySeparation", 38)),
+        new("maintenance-wake", "Performance", "Prevent maintenance wake-ups", "Keep automatic maintenance enabled while disabling its wake-up preference.", "B §3.2", true,
+            M(Policies + @"\Task Scheduler\Maintenance", "WakeUp", 0)),
+        new("search-power", "Performance", "Make indexing respect power mode", "Let Windows Search indexing follow power-mode preferences.", "B §3.2", true,
+            M(@"Microsoft\Windows Search\Gather\Windows\SystemIndex", "RespectPowerModes", 1)),
+        new("this-pc", "File Explorer", "Open File Explorer to This PC", "Use This PC as the initial Explorer location.", "B §7.1", true,
+            U(Explorer, "LaunchTo", 1)),
+        new("extensions", "File Explorer", "Show file extensions and hidden files", "Show hidden files and extensions; protected operating system files remain hidden.", "B §7.1", true,
+            U(Explorer, "HideFileExt", 0), U(Explorer, "Hidden", 1)),
+        new("compact", "File Explorer", "Compact Explorer spacing", "Use compact spacing in supported Windows 11 Explorer views.", "B §7.1", true,
+            U(Explorer, "UseCompactMode", 1)),
+        new("recent", "File Explorer", "Hide recent and frequent items", "Disable recent files and frequent folders in Explorer Home.", "B §7.1", true,
+            U(UserWindows + @"\Explorer", "ShowRecent", 0), U(UserWindows + @"\Explorer", "ShowFrequent", 0)),
+        new("sync-notices", "File Explorer", "Hide sync provider suggestions", "Hide Explorer sync provider notifications without disabling file synchronization.", "B §4.3", true,
+            U(Explorer, "ShowSyncProviderNotifications", 0)),
+        new("checkboxes", "File Explorer", "Hide item selection checkboxes", "Use standard click selection instead of item checkboxes.", "B §7.1", true,
+            U(Explorer, "AutoCheckSelect", 0)),
+        new("long-paths", "File Explorer", "Enable long file paths", "Enable long paths for applications that opt in; older applications may still have limits.", "B §7.1", true,
+            S(@"Control\FileSystem", "LongPathsEnabled", 1)),
+        new("taskbar-left", "Desktop & taskbar", "Align taskbar to the left", "Use left-aligned Windows 11 taskbar icons.", "B §8.2", true,
+            U(Explorer, "TaskbarAl", 0)),
+        new("task-view", "Desktop & taskbar", "Hide Task View button", "Hide the button; keyboard shortcuts and virtual desktops remain available.", "B §8.2", true,
+            U(Explorer, "ShowTaskViewButton", 0)),
+        new("search-icon", "Desktop & taskbar", "Show search as an icon", "Use the compact search icon instead of the search box.", "B §4.2", true,
+            U(UserWindows + @"\Search", "SearchboxTaskbarMode", 1)),
+        new("start-recommendations", "Desktop & taskbar", "Reduce Start recommendations", "Hide recently added apps and personalized website recommendations where the edition supports these policies.", "B §5.2", true,
+            M(Policies + @"\Explorer", "HideRecentlyAddedApps", 1), M(Policies + @"\Explorer", "HideRecommendedPersonalizedSites", 1)),
+        new("alt-tab", "Desktop & taskbar", "Show only windows in Alt+Tab", "Exclude browser tabs from Alt+Tab.", "B §8.1", true,
+            U(Explorer, "MultiTaskingAltTabFilter", 3)),
+        new("aero-shake", "Desktop & taskbar", "Disable window shake", "Do not minimize other windows when shaking a title bar.", "B §8.1", true,
+            U(Explorer, "DisallowShaking", 1)),
+        new("animations", "Desktop & taskbar", "Reduce window animations", "Disable minimize and taskbar animations while keeping font smoothing and thumbnails.", "B §5.2", true,
+            U(@"Control Panel\Desktop\WindowMetrics", "MinAnimate", "0"), U(Explorer, "TaskbarAnimations", 0)),
+        new("menu-delay", "Desktop & taskbar", "Remove menu show delay", "Open traditional cascading menus without the configured delay.", "B §8.1", false,
+            U(@"Control Panel\Desktop", "MenuShowDelay", "0")),
+        new("wallpaper", "Desktop & taskbar", "High-quality JPEG wallpaper", "Set JPEG wallpaper import quality to 100; this does not install RyanOS artwork.", "B §5.1", true,
+            U(@"Control Panel\Desktop", "JPEGImportQuality", 100)),
+        new("theme-preserve", "Desktop & taskbar", "Keep icons and pointers when changing themes", "Prevent themes from replacing desktop icons or mouse pointers.", "B §5.3", true,
+            U(UserWindows + @"\Themes", "ThemeChangesMousePointers", 0), U(UserWindows + @"\Themes", "ThemeChangesDesktopIcons", 0)),
+        new("classic-menu", "Desktop & taskbar", "Classic context menu", "Request the classic Windows 11 right-click menu. Future Windows builds may ignore this preference.", "C §4", false,
+            U(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32", "", "")),
+        new("snap", "Desktop & taskbar", "Hide Snap layout suggestions", "Hide the maximize-button flyout and top-edge Snap bar. Window snapping remains available.", "C §4", false,
+            U(Explorer, "EnableSnapAssistFlyout", 0), U(Explorer, "EnableSnapBar", 0)),
+        new("gallery", "File Explorer", "Hide Explorer Gallery", "Hide Gallery in supported Explorer navigation panes without deleting photos.", "C §4", false,
+            U(@"Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", "System.IsPinnedToNameSpaceTree", 0)),
+        new("transfer-details", "File Explorer", "Show detailed file transfers", "Use the expanded details view for Explorer file operations.", "B §7.1", true,
+            U(UserWindows + @"\Explorer\OperationStatusManager", "EnthusiastMode", 1)),
+        new("verbose-status", "Desktop & taskbar", "Show detailed startup and shutdown status", "Show verbose Windows status messages during startup and shutdown.", "C §4", false,
+            M(@"Microsoft\Windows\CurrentVersion\Policies\System", "verbosestatus", 1)),
+        new("mouse", "Input & sound", "Disable pointer acceleration", "Disable Windows pointer acceleration. Games using raw input have their own behavior.", "B §5.1", false,
+            U(@"Control Panel\Mouse", "MouseSpeed", "0"), U(@"Control Panel\Mouse", "MouseThreshold1", "0"), U(@"Control Panel\Mouse", "MouseThreshold2", "0")),
+        new("ducking", "Input & sound", "Keep audio volume during calls", "Do not reduce other sounds when Windows detects communication activity.", "B §5.1", true,
+            U(@"Software\Microsoft\Multimedia\Audio", "UserDuckingPreference", 3)),
+        new("touch-keyboard", "Input & sound", "Reduce touch keyboard assistance", "Disable automatic capitalization, key sounds, spelling correction and text prediction.", "B §5.1", false,
+            U(@"Software\Microsoft\TabletTip\1.7", "EnableAutoShiftEngage", 0), U(@"Software\Microsoft\TabletTip\1.7", "EnableKeyAudioFeedback", 0),
+            U(@"Software\Microsoft\TabletTip\1.7", "EnableAutocorrection", 0), U(@"Software\Microsoft\TabletTip\1.7", "EnableSpellchecking", 0),
+            U(@"Software\Microsoft\TabletTip\1.7", "EnableTextPrediction", 0)),
+        new("dynamic-lighting", "Input & sound", "Disable Windows dynamic lighting", "Turn off the Windows lighting preference; vendor RGB tools are separate.", "B §5.1", false,
+            U(@"Software\Microsoft\Lighting", "AmbientLightingEnabled", 0)),
+        new("delivery", "Updates", "Disable peer-to-peer update downloads", "Use HTTP downloads without Delivery Optimization peers; Windows Update remains available.", "B §6", true,
+            M(Policies + @"\DeliveryOptimization", "DODownloadMode", 0)),
+        new("update-reboot", "Updates", "Limit update wake-ups and automatic restarts", "Request no automatic restart while users are logged on. Deadlines and other policies can override this.", "B §6", false,
+            M(Policies + @"\WindowsUpdate", "AUPowerManagement", 0), M(Policies + @"\WindowsUpdate\AU", "NoAutoRebootWithLoggedOnUsers", 1)),
+        new("auto-updates", "Updates", "Disable automatic Windows updates", "Require manual patch maintenance. Implements the RyanOS UI intent using NoAutoUpdate rather than its unrelated app-update records.", "Guide §3.2; B §6", false,
+            M(Policies + @"\WindowsUpdate\AU", "NoAutoUpdate", 1)),
+        new("remote-assistance", "Security & compatibility", "Disable Remote Assistance", "Disable offered and solicited Windows Remote Assistance; Remote Desktop is separate.", "B §9", false,
+            S(@"Control\Remote Assistance", "fAllowToGetHelp", 0), M(@"Policies\Microsoft\Windows NT\Terminal Services", "fAllowToGetHelp", 0),
+            M(@"Policies\Microsoft\Windows NT\Terminal Services", "fAllowUnsolicited", 0)),
+        new("core-isolation", "Security & compatibility", "Disable VBS and memory integrity", "Set VBS and memory integrity preferences off. Credential Guard, LSA protection and boot settings are kept; this is a narrower alternative to RyanOS's script. Firmware locks or organization policy may prevent it.", "A §9.1; C §7", false,
+            S(@"Control\DeviceGuard", "EnableVirtualizationBasedSecurity", 0),
+            S(@"Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity", "Enabled", 0)),
+        new("fth", "Security & compatibility", "Disable Fault Tolerant Heap", "Disable the FTH compatibility preference. Some older applications may become less stable; existing FTH state is not reset.", "B §3.2", false,
+            M(@"Microsoft\FTH", "Enabled", 0))
+    ];
+
+    public static IEnumerable<PolicyValue> ForSelection(IEnumerable<string> ids) =>
+        ids.SelectMany(id => Options.Single(option => option.Id == id).Values);
+}

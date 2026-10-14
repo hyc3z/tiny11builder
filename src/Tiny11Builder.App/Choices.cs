@@ -30,6 +30,17 @@ public sealed class OptionChoice(CleanupOption option) : ObservableChoice
     public bool Selected { get => selected; set => Set(ref selected, value); }
 }
 
+public sealed class ConfigurationChoice(ConfigurationOption option) : ObservableChoice
+{
+    private bool selected;
+    public ConfigurationOption Option { get; } = option;
+    public string Title => Option.Title;
+    public string Description => Option.Description;
+    public bool Selected { get => selected; set => Set(ref selected, value); }
+}
+
+public sealed record ConfigurationGroup(string Title, ConfigurationChoice[] Choices);
+
 public sealed class InventoryChoice(ImageInventoryItem item) : ObservableChoice
 {
     private bool selected;

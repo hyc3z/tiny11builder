@@ -239,6 +239,9 @@ internal static class ResumeSupport
         text.AppendLine($"Output: {recipe.OutputPath}");
         text.AppendLine($"Mode: {mode} · {recipe.SelectedOptions.Length} removal groups · {recipe.ExpertActions.Length} individual actions");
         text.AppendLine($"Compression: {compression}");
+          text.AppendLine($"Configuration: {recipe.ConfigurationOptions.Length} settings");
+          foreach (var option in ConfigurationCatalog.Options.Where(option => recipe.ConfigurationOptions.Contains(option.Id)))
+              text.AppendLine($"  {option.Title}");
         text.AppendLine();
         text.AppendLine("The removal choices from the original build stay as they were. They can't be changed when resuming.");
         if (recipe.Flavor == BuildFlavor.Core)

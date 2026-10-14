@@ -239,9 +239,9 @@ public sealed partial class BuildEngine
         // The export has finished. Checking, placing and checkpointing its result must not be interrupted by a cancellation
         // request, or the finished (and slowest) work would be lost; cancellation is observed at the next stage boundary.
         var finalImages = await s.Dism.GetImagesAsync(partial, CancellationToken.None).ConfigureAwait(false);
-        if (finalImages.Count != 1 || finalImages[0].Version.Build != s.Image.Version.Build ||
-            finalImages[0].Architecture != s.Image.Architecture)
-            throw new InvalidDataException("The final installation image failed its edition/build/architecture check.");
+        RequireSameImage(finalImages, s.Image, "The final installation image");
+        if (finalImages[0].Version.Build != s.Image.Version.Build)
+            s.Log($"Servicing finalized a known enablement build: {s.Image.Version} -> {finalImages[0].Version}.");
         Digest.RequireCompleteWim(partial, "The compressed installation image");
         File.Move(partial, Path.Combine(sources, leaf), overwrite: false);
         PathSafety.DeleteOwnedDirectory(partialDirectory, s.Job.Directory);
@@ -405,7 +405,7 @@ public sealed partial class BuildEngine
             {
                 SchemaVersion = 1, CompletedUtc = DateTimeOffset.UtcNow, Image = s.Image, recipe.Flavor,
                 LegacyInstallerEnabled = SetupInstaller.RequiresLegacy(recipe),
-                recipe.SelectedOptions, recipe.ExpertActions, recipe.Compression, recipe.EnableNetFx3,
+                recipe.SelectedOptions, recipe.ConfigurationOptions, recipe.ExpertActions, recipe.Compression, recipe.EnableNetFx3,
                 recipe.TurboMode, recipe.RemoveRedundantData, recipe.OmitNetFx3SetupPayload,
                 Execution = s.Execution, UsedOptimizedMount = s.UsedOptimizedMount, SetupMedia = s.StagingResult,
                 RedundantData = s.Cleanup, RemovedLogicalBytes = s.Cleanup.Sum(item => item.LogicalBytes),

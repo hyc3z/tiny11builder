@@ -37,6 +37,14 @@ public sealed class OfflineRegistry : IOfflineRegistry
                     value.Key.Replace("{ControlSet}", controlSet, StringComparison.Ordinal), value.Name, value.Value, log);
         if (recipe.PreferLocalAccount)
             Set(software, @"Microsoft\Windows\CurrentVersion\OOBE", "BypassNRO", 1, log);
+        // Configuration runs after removal-group policies so explicit preferences take precedence.
+        foreach (var id in recipe.ConfigurationOptions)
+        {
+            log($"Configuration: {ConfigurationCatalog.Options.Single(option => option.Id == id).Title}");
+            foreach (var value in ConfigurationCatalog.ForSelection([id]))
+                Set(value.Hive switch { PolicyHive.Software => software, PolicyHive.DefaultUser => user, _ => system },
+                    value.Key.Replace("{ControlSet}", controlSet, StringComparison.Ordinal), value.Name, value.Value, log);
+        }
         if (recipe.Flavor == BuildFlavor.Core)
         {
             foreach (var control in system.GetSubKeyNames().Where(key =>

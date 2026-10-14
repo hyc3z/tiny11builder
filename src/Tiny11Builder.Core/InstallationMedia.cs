@@ -62,8 +62,11 @@ public sealed class IsoMedia : IMediaSource
 
     public IsoMedia(string path)
     {
-        var storage = new VirtualStorageType { DeviceId = 1, VendorId = new("EC984AEC-A0F9-47E9-901F-71415A66345B") };
-        Check(OpenVirtualDisk(ref storage, path, 0xD0000, 0, IntPtr.Zero, out handle), "Open ISO");
+        // Match the Windows ISO sample: infer the type/provider from the extension,
+        // and explicitly open with the read-only version 1 parameters.
+        var storage = new VirtualStorageType { DeviceId = 0, VendorId = Guid.Empty };
+        var open = new OpenParameters { Version = 1, RWDepth = 0 };
+        Check(OpenVirtualDisk(ref storage, path, 0xD0000, 0, ref open, out handle), "Open ISO");
         try
         {
             uint length = 2048;
@@ -102,15 +105,22 @@ public sealed class IsoMedia : IMediaSource
     public void Dispose() => handle.Dispose();
     private static void Check(uint code, string operation)
     {
-        if (code != 0) throw new Win32Exception((int)code, operation);
+        if (code == 0) return;
+        var detail = new Win32Exception(unchecked((int)code)).Message;
+        var hint = code == 0xC03A0014
+            ? " Windows could not find a virtual disk provider for this ISO. Try mounting it in File Explorer, or extract it and choose the extracted installation folder."
+            : "";
+        throw new Win32Exception(unchecked((int)code), $"{operation} failed (0x{code:X8}): {detail}.{hint}");
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct VirtualStorageType { public uint DeviceId; public Guid VendorId; }
     [StructLayout(LayoutKind.Sequential)]
+    private struct OpenParameters { public uint Version; public uint RWDepth; }
+    [StructLayout(LayoutKind.Sequential)]
     private struct AttachParameters { public uint Version; public uint Reserved; }
     [DllImport("virtdisk.dll", CharSet = CharSet.Unicode)]
     private static extern uint OpenVirtualDisk(ref VirtualStorageType type, string path, uint access,
-        uint flags, IntPtr parameters, out SafeFileHandle handle);
+        uint flags, ref OpenParameters parameters, out SafeFileHandle handle);
     [DllImport("virtdisk.dll")]
     private static extern uint AttachVirtualDisk(SafeFileHandle handle, IntPtr security, uint flags,
         uint providerFlags, ref AttachParameters parameters, IntPtr overlapped);

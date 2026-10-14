@@ -237,15 +237,21 @@ public sealed partial class BuildEngine
         return directory;
     }
 
-    private static void RequireSameImage(IReadOnlyList<WindowsImage> images, WindowsImage expected, string what)
+    internal static void RequireSameImage(IReadOnlyList<WindowsImage> images, WindowsImage expected, string what)
     {
         if (images.Count != 1) throw new InvalidDataException($"{what} must contain exactly one image but contains {images.Count}.");
         var actual = images[0];
-        if (actual.Architecture != expected.Architecture || actual.Version.Build != expected.Version.Build ||
+        // Committing an enablement-package image can finalize its advertised build (e.g. 22621 -> 22631).
+        // Permit only forward transitions within explicitly known servicing families, never unknown builds.
+        if (actual.Architecture != expected.Architecture || actual.Version.Major != expected.Version.Major ||
+            actual.Version.Minor != expected.Version.Minor || actual.Version.Build < expected.Version.Build ||
+            ImageBuildCompatibility.ServicingBase(actual.Version.Build) != ImageBuildCompatibility.ServicingBase(expected.Version.Build) ||
             !actual.Edition.Equals(expected.Edition, StringComparison.OrdinalIgnoreCase) ||
             !actual.Name.Equals(expected.Name, StringComparison.OrdinalIgnoreCase) ||
             !actual.Installation.Equals(expected.Installation, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"{what} is a different Windows image ({actual.Summary}) than this job was building ({expected.Summary}).");
+            throw new InvalidDataException($"{what} is a different Windows image. " +
+                $"Expected: {expected.Name}, {expected.Edition}, {expected.Installation}, {expected.Architecture}, {expected.Version}. " +
+                $"Actual: {actual.Name}, {actual.Edition}, {actual.Installation}, {actual.Architecture}, {actual.Version}.");
     }
 
     // Frozen by default: a field added to BuildRecipe later cannot change on resume unless it is listed as free here.
@@ -254,6 +260,7 @@ public sealed partial class BuildEngine
         OutputPath = "", DismPath = "", OscdimgPath = "", Compression = default, KeepWorkingFiles = false,
         SourcePath = NormalizePath(recipe.SourcePath), WorkspacePath = NormalizePath(recipe.WorkspacePath),
         SelectedOptions = [.. recipe.SelectedOptions.Order(StringComparer.Ordinal)],
+        ConfigurationOptions = [.. recipe.ConfigurationOptions.Order(StringComparer.Ordinal)],
         ExpertActions = [.. recipe.ExpertActions.OrderBy(action => action.Kind).ThenBy(action => action.Identity, StringComparer.Ordinal)
             .ThenBy(action => action.Mode)]
     };

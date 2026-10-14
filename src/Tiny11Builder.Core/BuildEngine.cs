@@ -174,7 +174,7 @@ public sealed partial class BuildEngine
                 ("Mount", "Mount working image"), ("Inventory", "Validate individual image actions"),
                 ("Custom servicing", "Apply individual servicing actions"), ("Remove apps", "Remove selected apps"),
                 ("Optional features", "Remove optional features and capabilities"),
-                (".NET 3.5", "Include .NET Framework 3.5"), ("Windows settings", "Apply Windows settings"),
+                (".NET 3.5", "Include .NET Framework 3.5"), ("Windows settings", "Apply Windows settings and configuration"),
                 ("Component cleanup", "Clean superseded component files"), ("Advanced payloads", "Remove selected payload files"),
                 ("Core pruning", "Trim Core component payloads"), ("Redundant data", "Remove redundant offline data"),
                 ("Commit", "Save image changes"),
@@ -366,8 +366,8 @@ public sealed partial class BuildEngine
                 await dism.RunAsync(token, $"/Image:{mount}", "/Enable-Feature", "/FeatureName:NetFx3", "/All",
                     "/LimitAccess", $"/Source:{sxs}", "/NoRestart").ConfigureAwait(false);
             }
-            Stage("Windows settings", "Applying selected registry settings to the offline image.");
-            await tracking.RunAsync("registry:settings", "Windows settings", "Apply and verify offline Windows settings",
+            Stage("Windows settings", $"Applying Windows settings and {recipe.ConfigurationOptions.Length} configuration preferences to the offline image.");
+            await tracking.RunAsync("registry:settings", "Windows settings", $"Apply and verify Windows settings and {recipe.ConfigurationOptions.Length} configuration preferences",
                 () =>
                 {
                     registry.Apply(mount, recipe, Log);

@@ -58,12 +58,7 @@ public static class ToolLocator
         return api < core ? api : core;
     }
 
-    internal static int ServicingBase(int build) => build switch
-    {
-        22631 => 22621,                  // 23H2 enables features on the 22H2 core.
-        26200 or 26300 => 26100,         // 25H2 and 26H2 share the 24H2 core.
-        _ => build                      // Never infer compatibility for an unknown Insider build.
-    };
+    internal static int ServicingBase(int build) => ImageBuildCompatibility.ServicingBase(build);
     public static void Validate(string path, string filename)
     {
         path = PathSafety.Full(path);

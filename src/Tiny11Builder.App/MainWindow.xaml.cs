@@ -21,6 +21,9 @@ public sealed partial class MainWindow : Window
     private readonly BuildEngine engine = new(new ProcessRunner(), new MediaSourceFactory(),
         new OfflineRegistry(), new ImageOperations(), new BuildHost());
     private readonly List<OptionChoice> options = CleanupCatalog.Options.Select(o => new OptionChoice(o)).ToList();
+    private const int ConfigurationStep = 5;
+    private const int BuildStep = 6;
+    private readonly List<ConfigurationChoice> configurations = ConfigurationCatalog.Options.Select(o => new ConfigurationChoice(o)).ToList();
     private List<InventoryChoice> inventory = [];
     private ExpertAction[] pendingActions = [];
     private int? pendingImageIndex;
@@ -87,6 +90,10 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => progressTimer.Stop();
         LatestDownloadDescription.Text = $"Official Microsoft ISO · {HostArchitecture.ToUpperInvariant()} · {CultureInfo.CurrentUICulture.NativeName}";
         foreach (var choice in options) choice.PropertyChanged += (_, _) => UpdateCounts();
+        foreach (var choice in configurations) choice.PropertyChanged += (_, _) => UpdateConfiguration();
+        ConfigurationGroups.ItemsSource = configurations.GroupBy(choice => choice.Option.Category)
+            .Select(group => new ConfigurationGroup(group.Key, group.ToArray())).ToArray();
+        UpdateConfiguration();
         initialized = true;
         ApplyContrast();
         ApplyMode();
@@ -108,7 +115,7 @@ public sealed partial class MainWindow : Window
         UpdateCounts();
     }
 
-    private FrameworkElement[] Panels => [WelcomePanel, SourcePanel, CleanupPanel, SettingsPanel, ReviewPanel, BuildPanel];
+    private FrameworkElement[] Panels => [WelcomePanel, SourcePanel, CleanupPanel, SettingsPanel, ReviewPanel, ConfigurationPanel, BuildPanel];
     private BuildMode SelectedMode => (BuildMode)ModeChoice.SelectedIndex;
     private bool UsesCore => SelectedMode == BuildMode.Tiny11Core ||
         (SelectedMode == BuildMode.Custom && CustomCoreCheck.IsOn);
@@ -127,6 +134,7 @@ public sealed partial class MainWindow : Window
         var padding = ContentScroller.Padding;
         WelcomePanel.MinHeight = Math.Max(0, ContentScroller.ActualHeight - padding.Top - padding.Bottom);
         var stacked = ContentScroller.ActualWidth - padding.Left - padding.Right < 560;
+        CandyMascot.Visibility = stacked || HighContrast ? Visibility.Collapsed : Visibility.Visible;
         ArrangeModeCards(ModeCards, [RegularModeCard, CoreModeCard, CustomModeCard], stacked);
         ArrangeModeCards(RemovalModeCards, [Tiny11Selection, CoreSelection, CustomSelection], stacked);
         ArrangeSourceCards(ContentScroller.ActualWidth - padding.Left - padding.Right);
@@ -179,7 +187,8 @@ public sealed partial class MainWindow : Window
         UpdateWelcomeLayout();
         ContentScroller.ChangeView(null, 0, null, disableAnimation: true);
         if (value == 4) UpdateReview();
-        if (value == 5) UpdateBuildDescription(CreateRecipe());
+        if (value == ConfigurationStep) UpdateConfiguration();
+        if (value == BuildStep) UpdateBuildDescription(CreateRecipe());
         UpdateNavigation();
         // A step change can hide the control that had focus; keyboard users should not lose their place.
         DispatcherQueue.TryEnqueue(() => RestoreFocus(focused));
@@ -199,12 +208,12 @@ public sealed partial class MainWindow : Window
         };
         NextButton.IsEnabled = !busy && canAdvance;
         // After a build stops, the primary action says what it will do: start over, or continue the resume.
-        var retry = step == 5 && !completed && stoppedRun is not null;
+        var retry = step == BuildStep && !completed && stoppedRun is not null;
         ActionLabel.Text = completed ? "Build another" : retry ? (stoppedRun == OperationKind.Resume ? "Resume again" : "Build again") : step switch
         {
-            0 => "Start", 1 => "Next", 2 => "Next", 3 => "Review", 4 => "Continue", _ => "Build"
+            0 => "Start", 1 => "Next", 2 => "Next", 3 => "Review", 4 => "Configure", ConfigurationStep => "Continue", _ => "Build"
         };
-        ActionLabel.FontSize = 32;
+        ActionLabel.FontSize = 20;
         Grid.SetColumn(NextButton, 2);
         NextButton.HorizontalAlignment = HorizontalAlignment.Right;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(NextButton, ActionLabel.Text);
@@ -213,7 +222,7 @@ public sealed partial class MainWindow : Window
         ResumeButton.IsEnabled = !busy;
         ThemeChoice.IsEnabled = !busy && !HighContrast;
         // Advisory only: the checkpoint file's presence decides whether to offer Resume; the engine verifies it.
-        ResumeRunButton.Visibility = !busy && step == 5 && !completed && stoppedRun == OperationKind.Build && stoppedHasCheckpoint ?
+        ResumeRunButton.Visibility = !busy && step == BuildStep && !completed && stoppedRun == OperationKind.Build && stoppedHasCheckpoint ?
             Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.IsEnabled = busy && !cancelRequested;
@@ -225,8 +234,8 @@ public sealed partial class MainWindow : Window
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(CancelButton, copy.Hint);
             ToolTipService.SetToolTip(CancelButton, copy.Hint);
         }
-        CancelHint.Visibility = busy && step == 5 && (running is OperationKind.Build or OperationKind.Resume) ? Visibility.Visible : Visibility.Collapsed;
-        ContentScroller.IsEnabled = !busy || (step == 5 && running is OperationKind.Build or OperationKind.Resume);
+        CancelHint.Visibility = busy && step == BuildStep && (running is OperationKind.Build or OperationKind.Resume) ? Visibility.Visible : Visibility.Collapsed;
+        ContentScroller.IsEnabled = !busy || (step == BuildStep && running is OperationKind.Build or OperationKind.Resume);
     }
 
     private void OnRailChanged(object sender, SelectionChangedEventArgs args)
@@ -276,7 +285,7 @@ public sealed partial class MainWindow : Window
             GoStep(1);
             return;
         }
-        if (step == 5)
+        if (step == BuildStep)
         {
             await (stoppedRun == OperationKind.Resume && resumeJobFile is { } job ? ResumeJobAsync(job) : StartBuildAsync());
             return;
@@ -322,6 +331,7 @@ public sealed partial class MainWindow : Window
         Mode = SelectedMode, Flavor = UsesCore ? BuildFlavor.Core : BuildFlavor.Regular,
         CoreAcknowledged = coreAcknowledged, ExpertAcknowledged = ExpertConsent.IsChecked == true,
         SelectedOptions = options.Where(o => o.Selected).Select(o => o.Option.Id).ToArray(),
+        ConfigurationOptions = configurations.Where(o => o.Selected).Select(o => o.Option.Id).ToArray(),
         ExpertActions = inventory.Count > 0 ? inventory.Where(i => i.Selected).Select(i => i.Action).ToArray() : pendingActions,
         Compression = (Compression)CompressionChoice.SelectedIndex,
         CompactInstallation = CompactCheck.IsOn, EnableNetFx3 = NetFxCheck.IsOn,
@@ -751,6 +761,21 @@ public sealed partial class MainWindow : Window
         if (!initialized || applyingMode) return;
         ApplyMode();
     }
+    private void OnSelectAllGroups(object sender, RoutedEventArgs args)
+    {
+        if (!initialized || busy || modalOpen) return;
+        var keepCore = UsesCore;
+        applyingMode = true;
+        try
+        {
+            ModeChoice.SelectedIndex = (int)BuildMode.Custom;
+            CustomCoreCheck.IsOn = keepCore;
+            foreach (var choice in options) choice.Selected = true;
+        }
+        finally { applyingMode = false; }
+        UpdateModePresentation();
+        UpdateCounts();
+    }
     private void ApplyMode()
     {
         applyingMode = true;
@@ -793,6 +818,22 @@ public sealed partial class MainWindow : Window
     {
         if (!initialized || applyingMode) return;
         UpdateCounts();
+    }
+    private void OnSuggestedConfiguration(object sender, RoutedEventArgs args)
+    {
+        foreach (var choice in configurations) choice.Selected = choice.Option.Recommended;
+    }
+    private void OnClearConfiguration(object sender, RoutedEventArgs args)
+    {
+        foreach (var choice in configurations) choice.Selected = false;
+    }
+    private void UpdateConfiguration()
+    {
+        var selected = configurations.Where(choice => choice.Selected).ToArray();
+        ConfigurationCount.Text = selected.Length == 0 ? "No additional preferences selected." :
+            $"{selected.Length} settings selected · Included in the installation image.";
+        ConfigurationSummary.Text = selected.Length == 0 ? "No additional configuration settings." :
+            string.Join("\n", selected.Select(choice => $"{choice.Option.Category} · {choice.Title}"));
     }
     private void OnCustomCoreChanged(object sender, RoutedEventArgs args)
     {
@@ -895,6 +936,8 @@ public sealed partial class MainWindow : Window
         text.AppendLine("\nREMOVE / DISABLE");
         foreach (var option in options.Where(o => o.Selected)) text.AppendLine($"  {option.Title}");
         foreach (var action in recipe.ExpertActions) text.AppendLine($"  EXPERT {action.Mode} {action.Kind}: {action.Identity}");
+        text.AppendLine("\nCONFIGURATION");
+        foreach (var choice in configurations.Where(choice => choice.Selected)) text.AppendLine($"  {choice.Option.Category}: {choice.Title}");
         text.AppendLine("\nUNSELECTED ITEMS ARE KEPT.");
         if (recipe.Flavor == BuildFlavor.Core)
             text.AppendLine("\nCORE: irreversible component pruning, WinRE removed, Update and Defender disabled. Install optional features now, not after creation.");
@@ -916,6 +959,7 @@ public sealed partial class MainWindow : Window
         ReviewPaths.Text = $"ISO\n{recipe.OutputPath}\n\nWorkspace\n{recipe.WorkspacePath}";
         var compression = recipe.Compression switch { Compression.Recovery => "Recovery ESD", Compression.Maximum => "Maximum WIM", _ => "Fast WIM" };
         ReviewOptions.Text = $"{compression} compression\nTurbo mode: {(recipe.TurboMode ? "On" : "Off")}\n" +
+            $"Configuration: {recipe.ConfigurationOptions.Length} settings\n" +
             $"Redundant data: {(recipe.RemoveRedundantData ? "Remove" : "Keep")}\n.NET setup payload: {(recipe.OmitNetFx3SetupPayload ? "Omit" : "Keep")}\n" +
             $"Compact installation: {(recipe.CompactInstallation ? "On" : "Off")}\n.NET 3.5: {(recipe.EnableNetFx3 ? "Included" : "Not included")}\n" +
             $"Local-account setup: {(recipe.PreferLocalAccount ? "Preferred" : "Default")}\nWorking files: {(recipe.KeepWorkingFiles ? "Keep" : "Clean after build")}" +
@@ -925,8 +969,16 @@ public sealed partial class MainWindow : Window
     private const string BuildDescriptionText = "The selected edition will be copied, modified, compressed and saved as a bootable ISO.";
 
     // The legacy installer is derived from the removals, never chosen, so this only reports it.
-    private void UpdateBuildDescription(BuildRecipe recipe) => BuildDescription.Text = BuildDescriptionText +
-        (SetupLabels.LegacyReason(recipe) is { } reason ? $" The legacy installer is turned on automatically for {reason}." : "");
+    private void UpdateBuildDescription(BuildRecipe recipe)
+    {
+        BuildDescription.Text = BuildDescriptionText +
+            (SetupLabels.LegacyReason(recipe) is { } reason ? $" The legacy installer is turned on automatically for {reason}." : "");
+        var selected = ConfigurationCatalog.Options.Where(option => recipe.ConfigurationOptions.Contains(option.Id)).ToArray();
+        BuildConfigurationCount.Text = $"{selected.Length} configuration settings included in this job.";
+        BuildConfigurationSummary.Text = selected.Length == 0 ? "No additional preferences selected." :
+            string.Join("\n\n", selected.GroupBy(option => option.Category)
+                .Select(group => group.Key + "\n" + string.Join("\n", group.Select(option => "• " + option.Title))));
+    }
 
     private async Task StartBuildAsync()
     {
@@ -935,6 +987,8 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { ShowNotice("The recipe is not ready.", ErrorText.Reason(error), InfoBarSeverity.Error); return; }
         if (!await Confirm("Create this offline Windows image?",
             $"Output: {recipe.OutputPath}\n\nMode: {(ModeChoice.SelectedItem as ComboBoxItem)?.Content}\nRemoval groups: {recipe.SelectedOptions.Length}\nIndividual actions: {recipe.ExpertActions.Length}" +
+            $"\n\nConfiguration settings: {recipe.ConfigurationOptions.Length}" +
+            (recipe.ConfigurationOptions.Length > 0 ? "\n" + string.Join("\n", configurations.Where(choice => choice.Selected).Select(choice => choice.Title)) : "") +
             (SetupLabels.Legacy(recipe) is { } legacy ? "\n" + legacy : ""),
             "Build")) return;
         await RunOperation(OperationKind.Build, async token =>
@@ -1075,7 +1129,7 @@ public sealed partial class MainWindow : Window
             if (p.Percent is double percent) BuildBar.Value = percent;
             else if (p.State == BuildOperationState.Completed) BuildBar.Value = 100;
             CurrentPercent.Text = BuildBar.IsIndeterminate ? "" : $"{BuildBar.Value:0}%";
-            if (step == 5 && phase >= 0)
+            if (step == BuildStep && phase >= 0)
             {
                 var stage = board.Stages[phase];
                 if (activePhase != phase && p.State is not BuildOperationState.Completed)
@@ -1374,6 +1428,7 @@ public sealed partial class MainWindow : Window
         ModeChoice.SelectedIndex = (int)CleanupCatalog.ModeForRecipe(recipe);
         CustomCoreCheck.IsOn = recipe.Flavor == BuildFlavor.Core && SelectedMode == BuildMode.Custom;
         foreach (var choice in options) choice.Selected = recipe.SelectedOptions.Contains(choice.Option.Id);
+        foreach (var choice in configurations) choice.Selected = recipe.ConfigurationOptions.Contains(choice.Option.Id);
         applyingMode = false;
         CompressionChoice.SelectedIndex = (int)recipe.Compression;
         CompactCheck.IsOn = recipe.CompactInstallation;
@@ -1474,7 +1529,7 @@ public sealed partial class MainWindow : Window
         await RunOperation(OperationKind.Resume, async token =>
         {
             completed = false;
-            GoStep(5);
+            GoStep(BuildStep);
             ResetBuildPage();
             UpdateBuildDescription(recipe);
             workDirectory = candidate.JobDirectory;

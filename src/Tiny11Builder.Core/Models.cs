@@ -65,6 +65,7 @@ public sealed record BuildRecipe
     public bool ExpertAcknowledged { get; init; }
     public ExpertAction[] ExpertActions { get; init; } = [];
     public string[] SelectedOptions { get; init; } = [];
+    public string[] ConfigurationOptions { get; init; } = [];
     public bool EnableNetFx3 { get; init; }
     public bool CompactInstallation { get; init; } = true;
     public bool PreferLocalAccount { get; init; }
@@ -75,6 +76,9 @@ public sealed record BuildRecipe
 
     public void ValidateOptions()
     {
+        if (ConfigurationOptions is null || ConfigurationOptions.Distinct(StringComparer.Ordinal).Count() != ConfigurationOptions.Length ||
+            ConfigurationOptions.Any(id => !ConfigurationCatalog.Options.Any(option => option.Id == id)))
+            throw new InvalidDataException("Unknown or duplicate Windows configuration options.");
         if (SchemaVersion != 1 || !Enum.IsDefined(Compression) || !Enum.IsDefined(Flavor) ||
             (Mode is { } mode && !Enum.IsDefined(mode)))
             throw new InvalidDataException("This recipe version or compression mode is not supported.");

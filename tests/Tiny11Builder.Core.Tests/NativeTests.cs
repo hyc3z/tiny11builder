@@ -41,7 +41,7 @@ public sealed class NativeTests(Xunit.Abstractions.ITestOutputHelper output)
         new OfflineRegistry().Apply(mount, new BuildRecipe
         {
             Flavor = BuildFlavor.Core, CoreAcknowledged = true, SelectedOptions = ["ads", "privacy", "hardware-bypass"],
-            PreferLocalAccount = true
+            PreferLocalAccount = true, ConfigurationOptions = ["mouse", "foreground", "auto-updates", "classic-menu"]
         }, output.WriteLine);
         new ImageOperations().ApplyNativeActions(mount,
             [new(ImageItemKind.Service, "wuauserv", ExpertActionMode.Remove)], output.WriteLine);
@@ -55,6 +55,20 @@ public sealed class NativeTests(Xunit.Abstractions.ITestOutputHelper output)
         using (var hive = OfflineRegistry.Load(Path.Combine(mount, @"Windows\System32\config\SOFTWARE"), false))
         using (var key = hive.Root.OpenSubKey(@"Policies\Microsoft\Windows\DataCollection"))
             Assert.Equal(1, key!.GetValue("AllowTelemetry"));
+        using (var hive = OfflineRegistry.Load(Path.Combine(mount, @"Users\Default\NTUSER.DAT"), false))
+        {
+            using var mouse = hive.Root.OpenSubKey(@"Control Panel\Mouse");
+            Assert.Equal("0", mouse!.GetValue("MouseSpeed"));
+            Assert.Equal(RegistryValueKind.String, mouse.GetValueKind("MouseSpeed"));
+            using var menu = hive.Root.OpenSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32");
+            Assert.Equal("", menu!.GetValue(""));
+        }
+        using (var hive = OfflineRegistry.Load(Path.Combine(mount, @"Windows\System32\config\SYSTEM"), false))
+        using (var priority = hive.Root.OpenSubKey(@"ControlSet001\Control\PriorityControl"))
+            Assert.Equal(38, priority!.GetValue("Win32PrioritySeparation"));
+        using (var hive = OfflineRegistry.Load(Path.Combine(mount, @"Windows\System32\config\SOFTWARE"), false))
+        using (var update = hive.Root.OpenSubKey(@"Policies\Microsoft\Windows\WindowsUpdate\AU"))
+            Assert.Equal(1, update!.GetValue("NoAutoUpdate"));
         Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(mount)!, "*.hive.json"));
         using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         Assert.DoesNotContain(machine.GetSubKeyNames(), key => key.StartsWith("Tiny11Builder_Offline_", StringComparison.Ordinal));
